@@ -1,49 +1,77 @@
 const { Gateway, Wallets } = require('fabric-network');
 const fs = require('fs');
 const path = require('path');
-const nodemailer = require('nodemailer')
+const nodemailer = require('nodemailer');
 
-let contract = ''
-let gateway = ''
-const main = async () => {
-    // Charger le fichier de connexion
-    const ccpPath = path.resolve(__dirname, '../backend/connection', 'connection-org1.json');
-    const ccp = JSON.parse(fs.readFileSync(ccpPath, 'utf8'));
+// Variables globales pour la connexion
+let gateway;
+let contract;
 
-    // Charger le wallet
-    const walletPath = path.join(__dirname, '../backend/wallet');
+// Fonction pour initialiser la connexion
+const initializeGateway = async () => {
+    if (gateway) return;
 
-    const wallet = await Wallets.newFileSystemWallet(walletPath);
-    const identity = await wallet.get('appUser');
-    if (!identity) throw new Error("Identité appUser non trouvée.");
+    try {
+        // Chemin CORRECT vers le fichier de connexion
+        const ccpPath = path.resolve(__dirname, '../backend/connection', 'connection-org1.json');
+        const ccp = JSON.parse(fs.readFileSync(ccpPath, 'utf8'));
 
-    gateway = new Gateway();
-    await gateway.connect(ccp, {
-        wallet,
-        identity: 'appUser',
-        discovery: { enabled: true, asLocalhost: true }
-    });
+        // Chemin CORRECT vers le wallet (celui créé par votre script)
+        const walletPath = path.join(__dirname, '../backend/wallet');
+        const wallet = await Wallets.newFileSystemWallet(walletPath);
+        
+        // Utiliser 'appUser' comme identité
+        const identity = await wallet.get('appUser');
+        if (!identity) {
+            throw new Error("Identité appUser non trouvée dans le wallet.");
+        }
 
-    const network = await gateway.getNetwork('mychannel');
-    contract = network.getContract('doccc');
-}
+        gateway = new Gateway();
+        await gateway.connect(ccp, {
+            wallet,
+            identity: 'appUser',  // ← IMPORTANT: utiliser 'appUser'
+            discovery: { enabled: true, asLocalhost: true }
+        });
 
-// Fonction pour consulter un document à partir de son hash
+        const network = await gateway.getNetwork('mychannel');
+        contract = network.getContract('doccc');
+        
+        console.log('✅ Connexion Hyperledger Fabric établie');
+    } catch (error) {
+        console.error('❌ Erreur initialisation Fabric:', error);
+        throw error;
+    }
+};
+
+// Fonction pour consulter un document
 const consulterDocument = async (hash) => {
-    await main();
-    const result = await contract.evaluateTransaction('ConsulterDocument', hash);
-    await gateway.disconnect();
-    return result.toString();
+    try {
+        await initializeGateway();
+        const result = await contract.evaluateTransaction('ConsulterDocument', hash);
+        return result.toString();
+    } catch (error) {
+        console.error('Erreur consultation document:', error);
+        if (error.message.includes("aucun document trouve avec le hash")) {
+            throw error;
+        }
+        throw new Error(`Erreur blockchain: ${error.message}`);
+    }
 };
 
-// Fonction pour enregistrer un document dans la blockchain
+// Fonction pour enregistrer un document
 const enregistrerDocument = async (hash, owner, timestamp) => {
-    await main();
-    await contract.submitTransaction('EnregistrerDocument', hash, owner, timestamp);
-    await gateway.disconnect();
+    try {
+        await initializeGateway();
+        const result = await contract.submitTransaction('EnregistrerDocument', hash, owner, timestamp);
+        return result.toString();
+    } catch (error) {
+        console.error('Erreur enregistrement document:', error);
+        throw new Error(`Erreur blockchain: ${error.message}`);
+    }
 };
+
 module.exports = {
-    // POST / => enregistrer un document
+    // POST /documents => enregistrer un document
     post: async (req, res) => {
         const { hash } = req.body;
 
@@ -52,7 +80,7 @@ module.exports = {
         }
 
         const owner = req.session.user.username;
-        const email = req.session.user.email
+        const email = req.session.user.email;
         const now = new Date();
 
         const timestamp = now.toLocaleString('fr-FR', {
@@ -66,14 +94,14 @@ module.exports = {
         });
 
         try {
+            // Vérifier si le document existe déjà
             let exists = false;
             try {
                 const doc = await consulterDocument(hash);
                 if (doc) exists = true;
             } catch (e) {
-                // Si l’erreur vient du fait que le document n’existe pas → on continue
+                // Si l'erreur est "document non trouvé", on continue
                 if (!e.message.includes("aucun document trouve avec le hash")) {
-                    // Sinon, c’est une vraie erreur qu’on doit remonter
                     throw e;
                 }
             }
@@ -82,50 +110,61 @@ module.exports = {
                 return res.status(400).json({ error: 'Ce document est déjà enregistré.' });
             }
 
-            // Sinon on enregistre
-            try {
-                await enregistrerDocument(hash, owner, timestamp);
-                const transporter = nodemailer.createTransport({
-                    service: 'gmail',
-                    auth: {
-                        user: 'noreply.documenthashing@gmail.com', // l'adresse Gmail
-                        pass: 'pqmw ndam ogmu xyly' // Le mot de passe généré dans Google
-                    }
-                });
-                // Envoi de l’e-mail
-                const info = await transporter.sendMail({
-                    from: '<noreply@docLedger.com>',
-                    to: email,
-                    subject: 'Confirmation d’enregistrement du document',
-                    html: `<p>Bonjour <strong>${owner}</strong>,<br><br>Votre document a bien été enregistré.<br><br>Hash : ${hash}<br>Date : ${timestamp}<br><br><em>Merci d’avoir utilisé notre service docLedger.</em>`
-                });
+            // Enregistrer le document
+            await enregistrerDocument(hash, owner, timestamp);
 
-                res.status(200).json({ message: 'Document enregistré et email de confirmation envoyé.' });
-            } catch (error) {
-                console.error(error);
-                res.status(500).json({ error: `Erreur : ${error.message}` });
-            }
+            res.status(200).json({ 
+                message: 'Document enregistré avec succès dans la blockchain.',
+                hash: hash,
+                timestamp: timestamp,
+                owner: owner
+            });
 
         } catch (error) {
-            res.status(500).json({ error: `Erreur serveur : ${error.message}` });
+            console.error('Erreur enregistrement:', error);
+            
+            if (error.message.includes("déjà enregistré")) {
+                return res.status(400).json({ error: error.message });
+            }
+            
+            res.status(500).json({ 
+                error: `Erreur lors de l'enregistrement: ${error.message}` 
+            });
         }
     },
-    // GET /document?hash=... => consulter un document
+
+    // GET /documents?hash=... => consulter un document
     get: async (req, res) => {
         const { hash } = req.query;
-        try {
-            const result = await consulterDocument(hash);
-            res.status(200).json(JSON.parse(result));
-        } catch (error) {
-            res.status(404).json({ message: `Document introuvable ou erreur : ${error.message}` });
-        }
-    },
-    getSess: async (req, res) => {
-        if (!req.session.user || req.session.user == "") {
-            res.json({ connected: false });
-        } else {
-            res.json({ connected: true });
+        
+        if (!hash) {
+            return res.status(400).json({ error: 'Paramètre hash requis.' });
         }
 
+        try {
+            const result = await consulterDocument(hash);
+            const documentData = JSON.parse(result);
+            res.status(200).json(documentData);
+        } catch (error) {
+            if (error.message.includes("aucun document trouve avec le hash")) {
+                return res.status(404).json({ 
+                    error: 'Document non trouvé avec ce hash.' 
+                });
+            }
+            res.status(500).json({ 
+                error: `Erreur lors de la consultation: ${error.message}` 
+            });
+        }
+    },
+
+    getSess: async (req, res) => {
+        if (!req.session.user) {
+            res.json({ connected: false });
+        } else {
+            res.json({ 
+                connected: true,
+                user: req.session.user 
+            });
+        }
     }
 };

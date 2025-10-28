@@ -56,9 +56,11 @@ const login = async (email, password) => {
 module.exports = {
     post: async (req, res) => {
         const { email, password, username } = req.body;
-        if (!req.session.otpValidated || req.session.otpEmail !== email) {
-            return res.status(403).json({ error: "Email non vérifié par OTP." });
-        }
+        
+        // ⚠️ OTP COMMENTÉ POUR TEST - DÉCOMMENTEZ POUR RÉACTIVER L'OTP ⚠️
+        // if (!req.session.otpValidated || req.session.otpEmail !== email) {
+        //     return res.status(403).json({ error: "Email non vérifié par OTP." });
+        // }
 
         try {
             const result = await register(email, password, username);
@@ -96,6 +98,8 @@ module.exports = {
         })
     },
     sendOTP: async (req, res) => {
+        // ⚠️ OTP COMMENTÉ POUR TEST - DÉCOMMENTEZ POUR RÉACTIVER L'ENVOI D'EMAILS ⚠️
+        /*
         const transporter = nodemailer.createTransport({
             service: 'gmail',
             auth: {
@@ -103,6 +107,7 @@ module.exports = {
                 pass: 'pqmw ndam ogmu xyly' // Le mot de passe généré dans Google
             }
         });
+        */
         const { email } = req.body;
 
         if (!email) return res.status(400).json({ error: "Email requis." });
@@ -112,6 +117,8 @@ module.exports = {
         req.session.otpEmail = email;
         req.session.otpExpire = Date.now() + 5 * 60 * 1000; // 5 minutes
 
+        // ⚠️ OTP COMMENTÉ POUR TEST - DÉCOMMENTEZ POUR RÉACTIVER L'ENVOI D'EMAILS ⚠️
+        /*
         const mailOptions = {
             from: '<noreply@docLedger.com>',
             to: email,
@@ -125,6 +132,15 @@ module.exports = {
         } catch (err) {
             res.status(500).json({ error: "Erreur lors de l'envoi de l'email." });
         }
+        */
+        
+        // ✅ POUR TEST - RETOURNE DIRECTEMENT L'OTP DANS LA RÉPONSE
+        console.log(`📧 [TEST] OTP généré pour ${email}: ${otp}`);
+        res.status(200).json({ 
+            message: "Code OTP généré (mode test)", 
+            otp: otp, // ⚠️ À retirer en production
+            debug: "L'envoi d'email est désactivé en mode test" 
+        });
     },
     validateOTP: (req, res) => {
         const { otp } = req.body;
@@ -164,4 +180,3 @@ module.exports = {
     }
 
 }
-
