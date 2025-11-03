@@ -2,9 +2,40 @@ const express = require('express');
 const session = require('express-session');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs'); // ← IMPORTANT
+const documentController = require('./controllers/documentController');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Configuration de Multer pour l'upload de fichiers
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = path.join(__dirname, 'uploads');
+        // Créer le dossier s'il n'existe pas
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        // Générer un nom de fichier unique
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB max
+    },
+    fileFilter: function (req, file, cb) {
+        // Accepter tous les types de fichiers
+        cb(null, true);
+    }
+});
 
 // Middlewares
 app.use(cors({
@@ -34,6 +65,9 @@ app.use('/api', require('./routes'));
 // Routes du frontend (pour la compatibilité avec votre structure existante)
 app.use(require('./routes/router'));
 
+// Route pour l'upload de documents
+app.post('/api/documents/upload', upload.single('document'), documentController.upload);
+
 // Route racine - servir la page d'accueil
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
@@ -61,8 +95,16 @@ app.use((error, req, res, next) => {
     });
 });
 
-app.listen(PORT, () => {
-    console.log(` Serveur démarré sur le port ${PORT}`);
-    console.log(` API disponible sur: http://localhost:${PORT}/api`);
-    console.log(` Frontend disponible sur: http://localhost:${PORT}`);
+// Démarrage du serveur
+app.listen(PORT, async () => {
+    console.log(`Serveur démarré sur le port ${PORT}`);
+    console.log(`API disponible sur: http://localhost:${PORT}/api`);
+    console.log(`Frontend disponible sur: http://localhost:${PORT}`);
+    
+    // 🔄 RESTAURATION AUTOMATIQUE AU DÉMARRAGE
+    try {
+        await documentController.restoreBackupOnStartup();
+    } catch (error) {
+        console.log('ℹ️  Restauration non nécessaire ou erreur mineure:', error.message);
+    }
 });

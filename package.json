@@ -21,11 +21,13 @@
   "dependencies": {
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
     "fabric-ca-client": "^2.2.20",
     "fabric-network": "^2.2.20",
     "js-yaml": "^4.1.0",
+    "multer": "^2.0.2",
     "mysql": "^2.18.1",
     "mysql2": "^3.14.1",
     "nodemailer": "^7.0.3",
